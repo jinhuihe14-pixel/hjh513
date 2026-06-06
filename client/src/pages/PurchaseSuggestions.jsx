@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Button, message, Typography, Space, Tag } from 'antd';
-import { RefreshOutlined, ShoppingCartOutlined } from '@ant-design/icons';
+import { ReloadOutlined, ShoppingCartOutlined } from '@ant-design/icons';
 import { materialsAPI } from '../services/api';
 
 const { Title } = Typography;
@@ -39,7 +39,6 @@ function PurchaseSuggestions() {
     { title: '原料名称', dataIndex: 'material_name', key: 'material_name' },
     { title: '分类', dataIndex: 'category', key: 'category' },
     { title: '当前库存', dataIndex: 'current_stock', key: 'current_stock',
-      render: (v, r) => `${v} ${r.unit}`,
       render: (v, r) => <Tag color="red">{v} {r.unit}</Tag>
     },
     { title: '安全库存', dataIndex: 'safety_stock', key: 'safety_stock',
@@ -62,7 +61,7 @@ function PurchaseSuggestions() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={3}>采购建议</Title>
         <Space>
-          <Button icon={<RefreshOutlined />} onClick={loadSuggestions}>
+          <Button icon={<ReloadOutlined />} onClick={loadSuggestions}>
             刷新
           </Button>
           <Button 
