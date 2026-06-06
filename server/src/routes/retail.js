@@ -102,6 +102,9 @@ router.post('/orders', async (req, res) => {
   try {
     const order_no = generateOrderNo();
     const actualMemberLevel = order_type === 'wholesale' ? 'normal' : (member_level || 'normal');
+    const safeCustomerName = customer_name || null;
+    const safeCustomerPhone = customer_phone || null;
+    const safeRemark = remark || null;
     
     let total_amount = 0;
     const processedItems = [];
@@ -133,7 +136,7 @@ router.post('/orders', async (req, res) => {
       `INSERT INTO retail_orders 
        (order_no, order_date, salesperson_id, total_amount, order_type, member_level, customer_name, customer_phone, remark)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [order_no, order_date, salesperson_id, total_amount, order_type || 'retail', actualMemberLevel, customer_name, customer_phone, remark]
+      [order_no, order_date, salesperson_id, total_amount, order_type || 'retail', actualMemberLevel, safeCustomerName, safeCustomerPhone, safeRemark]
     );
     
     const orderId = orderResult.lastID;
@@ -176,6 +179,14 @@ router.delete('/orders/:id', async (req, res) => {
   const { id } = req.params;
   
   try {
+    const order = await get(`
+      SELECT * FROM retail_orders WHERE id = ?
+    `, [id]);
+    
+    if (!order) {
+      return res.status(404).json({ error: '订单不存在' });
+    }
+    
     const items = await all(`
       SELECT roi.product_id, roi.quantity, fp.is_gift_box
       FROM retail_order_items roi
@@ -208,6 +219,49 @@ router.delete('/orders/:id', async (req, res) => {
     
     await run('DELETE FROM retail_order_items WHERE order_id = ?', [id]);
     await run('DELETE FROM retail_orders WHERE id = ?', [id]);
+    
+    const dailySummary = await get(`
+      SELECT * FROM salary_daily_summary 
+      WHERE summary_date = ? AND employee_id = ?
+    `, [order.order_date, order.salesperson_id]);
+    
+    if (dailySummary) {
+      const config = await all('SELECT * FROM salary_config WHERE is_active = 1');
+      const retailCommissionConfig = config.find(c => c.role === 'salesperson' && c.config_type === 'retail_commission');
+      const wholesaleCommissionConfig = config.find(c => c.role === 'salesperson' && c.config_type === 'wholesale_commission');
+      
+      const retailCommissionRate = retailCommissionConfig ? parseFloat(retailCommissionConfig.config_value) : 0.02;
+      const wholesaleCommissionRate = wholesaleCommissionConfig ? parseFloat(wholesaleCommissionConfig.config_value) : 0.01;
+      
+      let retailSalesDeduct = 0;
+      let wholesaleSalesDeduct = 0;
+      let retailCommissionDeduct = 0;
+      let wholesaleCommissionDeduct = 0;
+      
+      if (order.order_type === 'retail') {
+        retailSalesDeduct = order.total_amount;
+        retailCommissionDeduct = order.total_amount * retailCommissionRate;
+      } else {
+        wholesaleSalesDeduct = order.total_amount;
+        wholesaleCommissionDeduct = order.total_amount * wholesaleCommissionRate;
+      }
+      
+      const newRetailSales = Math.max(0, (dailySummary.retail_sales || 0) - retailSalesDeduct);
+      const newWholesaleSales = Math.max(0, (dailySummary.wholesale_sales || 0) - wholesaleSalesDeduct);
+      const newRetailCommission = Math.max(0, (dailySummary.retail_commission || 0) - retailCommissionDeduct);
+      const newWholesaleCommission = Math.max(0, (dailySummary.wholesale_commission || 0) - wholesaleCommissionDeduct);
+      const newTotalCommission = Math.max(0, newRetailCommission + newWholesaleCommission);
+      
+      await run(`
+        UPDATE salary_daily_summary 
+        SET retail_sales = ?, wholesale_sales = ?, 
+            retail_commission = ?, wholesale_commission = ?, 
+            total_commission = ?
+        WHERE id = ?
+      `, [newRetailSales, newWholesaleSales, 
+           newRetailCommission, newWholesaleCommission, 
+           newTotalCommission, dailySummary.id]);
+    }
     
     res.json({ success: true });
   } catch (err) {
