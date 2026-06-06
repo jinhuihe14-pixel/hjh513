@@ -11,7 +11,7 @@ function generateOrderNo() {
 
 router.get('/orders', async (req, res) => {
   try {
-    const { start_date, end_date, salesperson_id, order_type } = req.query;
+    const { start_date, end_date, salesperson_id, order_type, member_level } = req.query;
     let sql = `
       SELECT ro.*, e.name as salesperson_name
       FROM retail_orders ro
@@ -35,6 +35,10 @@ router.get('/orders', async (req, res) => {
     if (order_type) {
       sql += ' AND ro.order_type = ?';
       params.push(order_type);
+    }
+    if (member_level) {
+      sql += ' AND ro.member_level = ?';
+      params.push(member_level);
     }
     
     sql += ' ORDER BY ro.order_date DESC, ro.created_at DESC';
@@ -73,18 +77,37 @@ router.get('/orders/:id', async (req, res) => {
   }
 });
 
+const MEMBER_DISCOUNTS = {
+  normal: 1.0,
+  silver: 0.95,
+  gold: 0.9
+};
+
+function calculateUnitPrice(product, orderType, memberLevel) {
+  if (orderType === 'wholesale') {
+    return product.wholesale_price || product.retail_price;
+  }
+  
+  if (product.is_gift_box) {
+    return product.retail_price;
+  }
+  
+  const discount = MEMBER_DISCOUNTS[memberLevel] || 1.0;
+  return Math.round(product.retail_price * discount * 100) / 100;
+}
+
 router.post('/orders', async (req, res) => {
-  const { order_date, salesperson_id, order_type, customer_name, customer_phone, remark, items } = req.body;
+  const { order_date, salesperson_id, order_type, member_level, customer_name, customer_phone, remark, items } = req.body;
   
   try {
     const order_no = generateOrderNo();
+    const actualMemberLevel = order_type === 'wholesale' ? 'normal' : (member_level || 'normal');
+    
     let total_amount = 0;
-    items.forEach(item => {
-      total_amount += item.quantity * item.unit_price;
-    });
+    const processedItems = [];
     
     for (const item of items) {
-      const product = await get('SELECT current_stock, is_gift_box FROM finished_products WHERE id = ?', [item.product_id]);
+      const product = await get('SELECT * FROM finished_products WHERE id = ?', [item.product_id]);
       
       if (!product) {
         return res.status(400).json({ error: `产品不存在: ${item.product_id}` });
@@ -93,24 +116,32 @@ router.post('/orders', async (req, res) => {
       if (product.current_stock < item.quantity) {
         return res.status(400).json({ error: `产品库存不足` });
       }
+      
+      const unitPrice = calculateUnitPrice(product, order_type, actualMemberLevel);
+      const subtotal = Math.round(item.quantity * unitPrice * 100) / 100;
+      total_amount += subtotal;
+      
+      processedItems.push({
+        ...item,
+        unit_price: unitPrice,
+        subtotal: subtotal,
+        product
+      });
     }
     
     const orderResult = await run(
       `INSERT INTO retail_orders 
-       (order_no, order_date, salesperson_id, total_amount, order_type, customer_name, customer_phone, remark)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [order_no, order_date, salesperson_id, total_amount, order_type || 'retail', customer_name, customer_phone, remark]
+       (order_no, order_date, salesperson_id, total_amount, order_type, member_level, customer_name, customer_phone, remark)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [order_no, order_date, salesperson_id, total_amount, order_type || 'retail', actualMemberLevel, customer_name, customer_phone, remark]
     );
     
     const orderId = orderResult.lastID;
     
-    for (const item of items) {
-      const product = await get('SELECT current_stock, is_gift_box FROM finished_products WHERE id = ?', [item.product_id]);
-      const subtotal = item.quantity * item.unit_price;
-      
+    for (const item of processedItems) {
       await run(
         'INSERT INTO retail_order_items (order_id, product_id, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?)',
-        [orderId, item.product_id, item.quantity, item.unit_price, subtotal]
+        [orderId, item.product_id, item.quantity, item.unit_price, item.subtotal]
       );
       
       await run(
@@ -118,7 +149,7 @@ router.post('/orders', async (req, res) => {
         [item.quantity, item.product_id]
       );
       
-      if (product.is_gift_box) {
+      if (item.product.is_gift_box) {
         const giftBoxItems = await all(`
           SELECT product_id, quantity
           FROM gift_box_items
@@ -135,7 +166,7 @@ router.post('/orders', async (req, res) => {
       }
     }
     
-    res.json({ success: true, order_no, total_amount });
+    res.json({ success: true, order_no, total_amount, member_level: actualMemberLevel });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

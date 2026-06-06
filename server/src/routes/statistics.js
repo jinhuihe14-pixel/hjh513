@@ -339,4 +339,56 @@ router.get('/employee-performance', async (req, res) => {
   }
 });
 
+router.get('/member-level-sales', async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    let sql = `
+      SELECT 
+        member_level,
+        COUNT(*) as order_count,
+        SUM(total_amount) as total_sales
+      FROM retail_orders
+      WHERE order_type = 'retail'
+    `;
+    
+    const params = [];
+    if (start_date) {
+      sql += ' AND order_date >= ?';
+      params.push(start_date);
+    }
+    if (end_date) {
+      sql += ' AND order_date <= ?';
+      params.push(end_date);
+    }
+    
+    sql += ' GROUP BY member_level ORDER BY total_sales DESC';
+    
+    const results = await all(sql, params);
+    
+    const levelNames = {
+      normal: '普通会员',
+      silver: '银卡会员',
+      gold: '金卡会员'
+    };
+    
+    const totalSales = results.reduce((sum, r) => sum + r.total_sales, 0);
+    
+    const data = results.map(r => ({
+      member_level: r.member_level,
+      level_name: levelNames[r.member_level] || r.member_level,
+      order_count: r.order_count,
+      total_sales: r.total_sales,
+      percentage: totalSales > 0 ? Math.round(r.total_sales / totalSales * 10000) / 100 : 0
+    }));
+    
+    res.json({
+      total_sales: totalSales,
+      data: data
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 module.exports = router;

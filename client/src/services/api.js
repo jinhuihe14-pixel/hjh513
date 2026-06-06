@@ -64,7 +64,8 @@ export const statisticsAPI = {
   getProductProfit: (params) => api.get('/statistics/product-profit', { params }),
   getUnsalableProducts: (params) => api.get('/statistics/unsalable-products', { params }),
   getLossStatisticsMonthly: (params) => api.get('/statistics/loss-statistics-monthly', { params }),
-  getCategorySales: (params) => api.get('/statistics/category-sales', { params })
+  getCategorySales: (params) => api.get('/statistics/category-sales', { params }),
+  getMemberLevelSales: (params) => api.get('/statistics/member-level-sales', { params })
 };
 
 export default api;

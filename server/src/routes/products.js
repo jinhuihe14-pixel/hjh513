@@ -26,12 +26,12 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { name, raw_material_id, category, unit, retail_price, is_gift_box, gift_box_items } = req.body;
+  const { name, raw_material_id, category, unit, retail_price, wholesale_price, is_gift_box, gift_box_items } = req.body;
   
   try {
     const result = await run(
-      'INSERT INTO finished_products (name, raw_material_id, category, unit, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?)',
-      [name, raw_material_id || null, category, unit || '斤', retail_price, is_gift_box ? 1 : 0]
+      'INSERT INTO finished_products (name, raw_material_id, category, unit, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [name, raw_material_id || null, category, unit || '斤', retail_price, wholesale_price || retail_price * 0.8, is_gift_box ? 1 : 0]
     );
     
     const productId = result.lastID;
@@ -53,12 +53,12 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, raw_material_id, category, unit, retail_price, is_gift_box, gift_box_items } = req.body;
+  const { name, raw_material_id, category, unit, retail_price, wholesale_price, is_gift_box, gift_box_items } = req.body;
   
   try {
     await run(
-      'UPDATE finished_products SET name = ?, raw_material_id = ?, category = ?, unit = ?, retail_price = ?, is_gift_box = ? WHERE id = ?',
-      [name, raw_material_id || null, category, unit || '斤', retail_price, is_gift_box ? 1 : 0, id]
+      'UPDATE finished_products SET name = ?, raw_material_id = ?, category = ?, unit = ?, retail_price = ?, wholesale_price = ?, is_gift_box = ? WHERE id = ?',
+      [name, raw_material_id || null, category, unit || '斤', retail_price, wholesale_price || retail_price * 0.8, is_gift_box ? 1 : 0, id]
     );
     
     await run('DELETE FROM gift_box_items WHERE gift_box_id = ?', [id]);

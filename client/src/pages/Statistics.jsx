@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Card, Typography, Row, Col, DatePicker, Select, Tabs, Table, Tag, Space
+  Card, Typography, Row, Col, DatePicker, Select, Tabs, Table, Tag, Space, Divider
 } from 'antd';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
@@ -25,6 +25,7 @@ function Statistics() {
   const [unsalableProducts, setUnsalableProducts] = useState([]);
   const [lossStatistics, setLossStatistics] = useState([]);
   const [categorySales, setCategorySales] = useState([]);
+  const [memberLevelSales, setMemberLevelSales] = useState({ total_sales: 0, data: [] });
 
   useEffect(() => {
     loadAllData();
@@ -35,19 +36,21 @@ function Statistics() {
     const endDate = dateRange[1].format('YYYY-MM-DD');
 
     try {
-      const [trendRes, profitRes, unsalableRes, lossRes, categoryRes] = await Promise.all([
+      const results = await Promise.allSettled([
         statisticsAPI.getSalesTrend({ start_date: startDate, end_date: endDate }),
         statisticsAPI.getProductProfit({ start_date: startDate, end_date: endDate }),
         statisticsAPI.getUnsalableProducts({ days: 30 }),
         roastingAPI.getLossStatistics({ start_date: startDate, end_date: endDate, group_by: 'material' }),
-        statisticsAPI.getCategorySales({ start_date: startDate, end_date: endDate })
+        statisticsAPI.getCategorySales({ start_date: startDate, end_date: endDate }),
+        statisticsAPI.getMemberLevelSales({ start_date: startDate, end_date: endDate })
       ]);
 
-      setSalesTrend(trendRes.data);
-      setProductProfit(profitRes.data);
-      setUnsalableProducts(unsalableRes.data);
-      setLossStatistics(lossRes.data);
-      setCategorySales(categoryRes.data);
+      if (results[0].status === 'fulfilled') setSalesTrend(results[0].value.data);
+      if (results[1].status === 'fulfilled') setProductProfit(results[1].value.data);
+      if (results[2].status === 'fulfilled') setUnsalableProducts(results[2].value.data);
+      if (results[3].status === 'fulfilled') setLossStatistics(results[3].value.data);
+      if (results[4].status === 'fulfilled') setCategorySales(results[4].value.data);
+      if (results[5].status === 'fulfilled') setMemberLevelSales(results[5].value.data);
     } catch (error) {
       console.error('加载统计数据失败', error);
     }
@@ -214,6 +217,62 @@ function Statistics() {
               pagination={{ pageSize: 10 }}
             />
           </Card>
+        </TabPane>
+
+        <TabPane tab="会员等级" key="6">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Card title="会员等级销售额占比">
+                <ResponsiveContainer width="100%" height={350}>
+                  <PieChart>
+                    <Pie
+                      data={memberLevelSales.data}
+                      dataKey="total_sales"
+                      nameKey="level_name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={100}
+                      label={({ level_name, percentage }) => `${level_name}: ${percentage}%`}
+                    >
+                      {memberLevelSales.data.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => `¥${value.toFixed(2)}`} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card title="会员等级销售明细">
+                <Table
+                  dataSource={memberLevelSales.data}
+                  rowKey="member_level"
+                  pagination={false}
+                  size="small"
+                  columns={[
+                    { title: '会员等级', dataIndex: 'level_name', key: 'level_name',
+                      render: (text, record) => {
+                        const colors = { normal: 'default', silver: 'blue', gold: 'gold' };
+                        return <Tag color={colors[record.member_level]}>{text}</Tag>;
+                      }
+                    },
+                    { title: '订单数', dataIndex: 'order_count', key: 'order_count' },
+                    { title: '销售额', dataIndex: 'total_sales', key: 'total_sales',
+                      render: (v) => `¥${v.toFixed(2)}`
+                    },
+                    { title: '占比', dataIndex: 'percentage', key: 'percentage',
+                      render: (v) => `${v}%`
+                    }
+                  ]}
+                />
+                <Divider />
+                <div style={{ textAlign: 'right', fontWeight: 'bold' }}>
+                  零售总销售额: ¥{memberLevelSales.total_sales.toFixed(2)}
+                </div>
+              </Card>
+            </Col>
+          </Row>
         </TabPane>
       </Tabs>
     </div>

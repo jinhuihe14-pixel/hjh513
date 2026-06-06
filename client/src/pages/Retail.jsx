@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Card, Row, Col, Input, Button, Table, Select, Form, DatePicker, 
   InputNumber, message, Typography, Space, Divider, Statistic, Tag
@@ -11,6 +11,31 @@ const { Title } = Typography;
 const { Search } = Input;
 const { Option } = Select;
 
+const MEMBER_DISCOUNTS = {
+  normal: 1.0,
+  silver: 0.95,
+  gold: 0.9
+};
+
+const MEMBER_LEVELS = [
+  { value: 'normal', label: '普通会员', color: 'default' },
+  { value: 'silver', label: '银卡会员', color: 'blue' },
+  { value: 'gold', label: '金卡会员', color: 'gold' }
+];
+
+function calculateProductPrice(product, orderType, memberLevel) {
+  if (orderType === 'wholesale') {
+    return product.wholesale_price || product.retail_price;
+  }
+  
+  if (product.is_gift_box) {
+    return product.retail_price;
+  }
+  
+  const discount = MEMBER_DISCOUNTS[memberLevel] || 1.0;
+  return Math.round(product.retail_price * discount * 100) / 100;
+}
+
 function Retail() {
   const [products, setProducts] = useState([]);
   const [salespersons, setSalespersons] = useState([]);
@@ -18,6 +43,8 @@ function Retail() {
   const [form] = Form.useForm();
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [orderType, setOrderType] = useState('retail');
+  const [memberLevel, setMemberLevel] = useState('normal');
 
   useEffect(() => {
     loadData();
@@ -40,7 +67,12 @@ function Retail() {
     p.name.includes(searchText) && p.current_stock > 0
   );
 
+  const getDisplayPrice = (product) => {
+    return calculateProductPrice(product, orderType, memberLevel);
+  };
+
   const addToCart = (product) => {
+    const displayPrice = getDisplayPrice(product);
     setCart(prev => {
       const existing = prev.find(item => item.product_id === product.id);
       if (existing) {
@@ -53,12 +85,29 @@ function Retail() {
       return [...prev, {
         product_id: product.id,
         product_name: product.name,
-        unit_price: product.retail_price,
+        unit_price: displayPrice,
+        original_price: product.retail_price,
+        wholesale_price: product.wholesale_price,
+        is_gift_box: product.is_gift_box,
         quantity: 1,
         stock: product.current_stock
       }];
     });
   };
+
+  useEffect(() => {
+    setCart(prev => prev.map(item => {
+      const product = products.find(p => p.id === item.product_id);
+      if (!product) return item;
+      const newPrice = calculateProductPrice(product, orderType, memberLevel);
+      return {
+        ...item,
+        unit_price: newPrice,
+        original_price: product.retail_price,
+        wholesale_price: product.wholesale_price
+      };
+    }));
+  }, [orderType, memberLevel, products]);
 
   const updateCartQuantity = (productId, quantity) => {
     setCart(prev => prev.map(item => 
@@ -76,7 +125,24 @@ function Retail() {
     setCart([]);
   };
 
-  const totalAmount = cart.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+  const totalAmount = useMemo(() => {
+    return cart.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+  }, [cart]);
+
+  const originalAmount = useMemo(() => {
+    return cart.reduce((sum, item) => sum + item.quantity * item.original_price, 0);
+  }, [cart]);
+
+  const discountAmount = useMemo(() => {
+    return Math.round((originalAmount - totalAmount) * 100) / 100;
+  }, [originalAmount, totalAmount]);
+
+  const handleOrderTypeChange = (value) => {
+    setOrderType(value);
+    if (value === 'wholesale') {
+      setMemberLevel('normal');
+    }
+  };
 
   const handleSubmit = async () => {
     try {
@@ -91,7 +157,8 @@ function Retail() {
       const data = {
         order_date: values.order_date.format('YYYY-MM-DD'),
         salesperson_id: values.salesperson_id,
-        order_type: values.order_type || 'retail',
+        order_type: orderType,
+        member_level: orderType === 'wholesale' ? 'normal' : memberLevel,
         customer_name: values.customer_name,
         customer_phone: values.customer_phone,
         remark: values.remark,
@@ -118,7 +185,19 @@ function Retail() {
   const cartColumns = [
     { title: '商品名称', dataIndex: 'product_name', key: 'product_name' },
     { title: '单价', dataIndex: 'unit_price', key: 'unit_price',
-      render: (v) => `¥${v.toFixed(2)}`
+      render: (v, record) => (
+        <div>
+          <div style={{ color: '#fa8c16', fontWeight: 'bold' }}>¥{v.toFixed(2)}</div>
+          {record.is_gift_box && orderType === 'retail' && memberLevel !== 'normal' && (
+            <div style={{ fontSize: 12, color: '#999' }}>礼盒不参与折扣</div>
+          )}
+          {!record.is_gift_box && orderType === 'retail' && memberLevel !== 'normal' && v !== record.original_price && (
+            <div style={{ fontSize: 12, color: '#999', textDecoration: 'line-through' }}>
+              ¥{record.original_price.toFixed(2)}
+            </div>
+          )}
+        </div>
+      )
     },
     { title: '数量', key: 'quantity',
       render: (_, record) => (
@@ -164,7 +243,15 @@ function Retail() {
       
       <Row gutter={16}>
         <Col span={16}>
-          <Card title="商品列表" style={{ marginBottom: 16 }}>
+          <Card title="商品列表" style={{ marginBottom: 16 }} extra={
+            <Space>
+              <span style={{ fontSize: 13, color: '#666' }}>订单类型:</span>
+              <Select value={orderType} onChange={handleOrderTypeChange} style={{ width: 120 }} size="small">
+                <Option value="retail">零售</Option>
+                <Option value="wholesale">批发</Option>
+              </Select>
+            </Space>
+          }>
             <Search
               placeholder="搜索商品名称"
               value={searchText}
@@ -173,26 +260,36 @@ function Retail() {
               allowClear
             />
             <Row gutter={[16, 16]}>
-              {filteredProducts.map(product => (
-                <Col key={product.id} xs={12} sm={8} md={6}>
-                  <Card 
-                    hoverable
-                    size="small"
-                    onClick={() => addToCart(product)}
-                    style={{ cursor: 'pointer' }}
-                    bodyStyle={{ padding: 12 }}
-                  >
-                    <div style={{ fontWeight: 'bold', marginBottom: 8 }}>{product.name}</div>
-                    <div style={{ color: '#fa8c16', fontSize: 18, fontWeight: 'bold', marginBottom: 8 }}>
-                      ¥{product.retail_price.toFixed(2)}
-                    </div>
-                    <div style={{ fontSize: 12, color: '#666' }}>
-                      {product.is_gift_box ? <Tag color="purple">礼盒</Tag> : <Tag color="green">散称</Tag>}
-                      库存: {product.current_stock}{product.unit}
-                    </div>
-                  </Card>
-                </Col>
-              ))}
+              {filteredProducts.map(product => {
+                const displayPrice = getDisplayPrice(product);
+                const hasDiscount = orderType === 'retail' && !product.is_gift_box && memberLevel !== 'normal' && displayPrice !== product.retail_price;
+                
+                return (
+                  <Col key={product.id} xs={12} sm={8} md={6}>
+                    <Card 
+                      hoverable
+                      size="small"
+                      onClick={() => addToCart(product)}
+                      style={{ cursor: 'pointer' }}
+                      bodyStyle={{ padding: 12 }}
+                    >
+                      <div style={{ fontWeight: 'bold', marginBottom: 8 }}>{product.name}</div>
+                      <div style={{ color: '#fa8c16', fontSize: 18, fontWeight: 'bold', marginBottom: 8 }}>
+                        ¥{displayPrice.toFixed(2)}
+                        {hasDiscount && (
+                          <span style={{ fontSize: 12, color: '#999', textDecoration: 'line-through', marginLeft: 8 }}>
+                            ¥{product.retail_price.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#666' }}>
+                        {product.is_gift_box ? <Tag color="purple">礼盒</Tag> : <Tag color="green">散称</Tag>}
+                        库存: {product.current_stock}{product.unit}
+                      </div>
+                    </Card>
+                  </Col>
+                );
+              })}
             </Row>
           </Card>
         </Col>
@@ -212,16 +309,48 @@ function Retail() {
               </Button>
             }
           >
+            {orderType === 'retail' && (
+              <Form.Item label="会员等级" style={{ marginBottom: 16 }}>
+                <Select value={memberLevel} onChange={setMemberLevel} style={{ width: '100%' }}>
+                  {MEMBER_LEVELS.map(level => (
+                    <Option key={level.value} value={level.value}>
+                      <Tag color={level.color}>{level.label}</Tag>
+                      {level.value !== 'normal' && (
+                        <span style={{ marginLeft: 8, fontSize: 12, color: '#999' }}>
+                          散称{Math.round(MEMBER_DISCOUNTS[level.value] * 100)}折
+                        </span>
+                      )}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            )}
+
             <Table
               columns={cartColumns}
               dataSource={cart}
               rowKey="product_id"
               pagination={false}
               size="small"
-              scroll={{ y: 300 }}
+              scroll={{ y: 250 }}
             />
             
             <Divider />
+            
+            <div style={{ marginBottom: 12 }}>
+              {discountAmount > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ color: '#999' }}>原价</span>
+                  <span style={{ color: '#999', textDecoration: 'line-through' }}>¥{originalAmount.toFixed(2)}</span>
+                </div>
+              )}
+              {discountAmount > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ color: '#52c41a' }}>会员优惠</span>
+                  <span style={{ color: '#52c41a' }}>-¥{discountAmount.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
             
             <Statistic
               title="订单总额"
@@ -245,7 +374,7 @@ function Retail() {
                 </Select>
               </Form.Item>
               <Form.Item name="order_type" label="订单类型" initialValue="retail">
-                <Select>
+                <Select onChange={handleOrderTypeChange}>
                   <Option value="retail">零售</Option>
                   <Option value="wholesale">批发</Option>
                 </Select>

@@ -1,4 +1,4 @@
-const { initDatabase, exec, run } = require('./db');
+const { initDatabase, exec, run, all } = require('./db');
 
 const initSql = `
 CREATE TABLE IF NOT EXISTS employees (
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS finished_products (
   unit TEXT DEFAULT '斤',
   current_stock REAL DEFAULT 0,
   retail_price REAL NOT NULL,
+  wholesale_price REAL DEFAULT 0,
   is_gift_box INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (raw_material_id) REFERENCES raw_materials(id)
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS retail_orders (
   salesperson_id INTEGER NOT NULL,
   total_amount REAL NOT NULL,
   order_type TEXT DEFAULT 'retail',
+  member_level TEXT DEFAULT 'normal',
   customer_name TEXT,
   customer_phone TEXT,
   remark TEXT,
@@ -194,15 +196,15 @@ async function initDefaultData() {
 
   const productsCount = await exec('SELECT COUNT(*) as count FROM finished_products');
   if (productsCount[0].values[0][0] === 0) {
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['原味瓜子', 1, '瓜子', '斤', 50, 15, 0]);
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['焦糖瓜子', 1, '瓜子', '斤', 40, 18, 0]);
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['五香花生', 2, '花生', '斤', 35, 12, 0]);
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['蒜香花生', 2, '花生', '斤', 30, 12, 0]);
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['纸皮核桃', 3, '坚果', '斤', 25, 38, 0]);
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['巴旦木', 4, '坚果', '斤', 20, 35, 0]);
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['南瓜子', 5, '瓜子', '斤', 25, 20, 0]);
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['精品礼盒A', null, '礼盒', '盒', 10, 168, 1]);
-    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?)", ['精品礼盒B', null, '礼盒', '盒', 8, 238, 1]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['原味瓜子', 1, '瓜子', '斤', 50, 15, 12, 0]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['焦糖瓜子', 1, '瓜子', '斤', 40, 18, 14.5, 0]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['五香花生', 2, '花生', '斤', 35, 12, 9.5, 0]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['蒜香花生', 2, '花生', '斤', 30, 12, 9.5, 0]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['纸皮核桃', 3, '坚果', '斤', 25, 38, 30, 0]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['巴旦木', 4, '坚果', '斤', 20, 35, 28, 0]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['南瓜子', 5, '瓜子', '斤', 25, 20, 16, 0]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['精品礼盒A', null, '礼盒', '盒', 10, 168, 138, 1]);
+    await run("INSERT INTO finished_products (name, raw_material_id, category, unit, current_stock, retail_price, wholesale_price, is_gift_box) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ['精品礼盒B', null, '礼盒', '盒', 8, 238, 198, 1]);
   }
 
   const giftBoxItemsCount = await exec('SELECT COUNT(*) as count FROM gift_box_items');
@@ -224,10 +226,39 @@ async function initDefaultData() {
   }
 }
 
+async function migrateDatabase() {
+  try {
+    const columns1 = await exec("PRAGMA table_info(finished_products)");
+    const hasWholesalePrice = columns1[0]?.values?.some(col => col[1] === 'wholesale_price');
+    if (!hasWholesalePrice) {
+      await run("ALTER TABLE finished_products ADD COLUMN wholesale_price REAL DEFAULT 0");
+      console.log('已添加 wholesale_price 字段到 finished_products 表');
+    }
+
+    const products = await all("SELECT id, retail_price, wholesale_price FROM finished_products");
+    for (const p of products) {
+      if (!p.wholesale_price || p.wholesale_price === 0) {
+        const defaultWholesale = Math.round(p.retail_price * 0.8 * 100) / 100;
+        await run("UPDATE finished_products SET wholesale_price = ? WHERE id = ?", [defaultWholesale, p.id]);
+      }
+    }
+
+    const columns2 = await exec("PRAGMA table_info(retail_orders)");
+    const hasMemberLevel = columns2[0]?.values?.some(col => col[1] === 'member_level');
+    if (!hasMemberLevel) {
+      await run("ALTER TABLE retail_orders ADD COLUMN member_level TEXT DEFAULT 'normal'");
+      console.log('已添加 member_level 字段到 retail_orders 表');
+    }
+  } catch (err) {
+    console.error('数据库迁移失败:', err.message);
+  }
+}
+
 async function initialize() {
   try {
     await initDatabase();
     await exec(initSql);
+    await migrateDatabase();
     await initDefaultData();
     console.log('数据库初始化完成！');
   } catch (err) {
